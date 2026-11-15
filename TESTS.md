@@ -24,6 +24,28 @@ Extra probe (same day): `POST /check` WETH on Ethereum
 `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` → **SAFE, score 5**,
 "Wrapped Ether (WETH)", supply 2,123,954.96, block 26417252.
 
+## v1.1.0 run (reputation registry) — 2026-11-15 ~19:28 WIB
+
+Change: new check 2 "reputation" — a curated confirmed-scam registry
+(`KNOWN_SCAMS` in `src/index.js`). A registry hit is a critical failure
+(+70). Mars Nexus `0xC4059D2F…3791c8` is the first entry (confirmed
+drain, 33 wallets, 2026-11-04). Same harness, same live RPCs/APIs.
+
+| # | Test | HTTP | Latency | Result |
+|---|------|------|---------|--------|
+| 1 | `GET /` demo page | 200 | 5 ms | HTML 4,050 chars, form + presets present |
+| 2 | `GET /health` | 200 | 0 ms | `{"ok":true,"agent":"sentinel","version":"1.1.0","chains":["bsc","eth"]}` |
+| 3 | `POST /check` WBNB (BSC) | 200 | 7.2 s | **SAFE, score 5** — unchanged; `reputation:pass` added |
+| 4 | `POST /check` Mars Nexus `0xC4059D2F…3791c8` (BSC) | 200 | 7.6 s | **DANGER, score 100** — `reputation:fail` ("confirmed scam: Mars Nexus") + unverified (+25) + active owner (+15), capped at 100 |
+| 5 | `POST /check` WBNB + unlimited `approve` calldata | 200 | 3.0 s | **DANGER, score 55** — unchanged |
+| 6 | `POST /agent` preflight envelope (`test-1`, WBNB) | 200 | 2.2 s | `decision: {verdict SAFE, risk_score 5}`, `task_id` echoed |
+| 7 | `POST /agent` empty envelope (`{type:"ping", input:{}}`) | 200 | 1 ms | Identity response, no crash, version 1.1.0 |
+| 8 | `GET /check?chain=bsc&address=<WBNB>` | 200 | 1.2 s | **SAFE, score 5** — unchanged |
+| 9 | `POST /check` bad address `0x1234` | 400 | 1 ms | Same 400 error as v1.0.0 |
+
+Extra probe (same run): `POST /check` WETH on Ethereum → **SAFE,
+score 5** — unchanged (6.6 s).
+
 Latency varies run to run (1.4–9.6 s across runs) — dominated by public
 RPC + 4byte.directory response times, not by local compute. All well
 inside the platform's 60 s task limit.

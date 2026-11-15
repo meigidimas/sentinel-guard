@@ -26,13 +26,14 @@ and the block number, so anyone can reproduce the verdict.
 | # | Check | How | Effect on score |
 |---|-------|-----|-----------------|
 | 1 | Contract vs EOA | `eth_getCode` | EOA → info only, no audit needed |
-| 2 | Source verified | Sourcify API **v2** (`/v2/contract/{chainId}/{address}`) | Unverified: +25, never SAFE |
-| 3 | Owner | `eth_call` `owner()` | Active owner: +15 |
-| 4 | Proxy | `eth_getStorageAt` EIP-1967 slot `0x3608…82bbc` | Proxy: +10 (+10 more if owner active) |
-| 5 | Selectors | PUSH4 scan of runtime bytecode (PUSH-aware, metadata trailer stripped), names via 4byte.directory | `selfdestruct`/`delegatecall`: +40 critical; `withdraw`/`sweep`: +15; `mint`: +10; fee/blacklist: +15; `pause`: +5 |
-| 6 | Calldata decode | `approve` / `setApprovalForAll` / `increaseAllowance` / `transfer(_from)` | Unlimited approval to an unknown spender: +50, critical |
-| 7 | Drainer patterns | blacklist / hidden-fee / owner-mintable combos from checks 3+5 | warn (no extra score; already counted) |
-| 8 | ERC-20 info | `eth_call` `name`/`symbol`/`decimals`/`totalSupply` | info only |
+| 2 | Reputation | Curated confirmed-scam registry (`KNOWN_SCAMS` in `src/index.js`) | Registry hit: +70, critical |
+| 3 | Source verified | Sourcify API **v2** (`/v2/contract/{chainId}/{address}`) | Unverified: +25, never SAFE |
+| 4 | Owner | `eth_call` `owner()` | Active owner: +15 |
+| 5 | Proxy | `eth_getStorageAt` EIP-1967 slot `0x3608…82bbc` | Proxy: +10 (+10 more if owner active) |
+| 6 | Selectors | PUSH4 scan of runtime bytecode (PUSH-aware, metadata trailer stripped), names via 4byte.directory | `selfdestruct`/`delegatecall`: +40 critical; `withdraw`/`sweep`: +15; `mint`: +10; fee/blacklist: +15; `pause`: +5 |
+| 7 | Calldata decode | `approve` / `setApprovalForAll` / `increaseAllowance` / `transfer(_from)` | Unlimited approval to an unknown spender: +50, critical |
+| 8 | Drainer patterns | blacklist / hidden-fee / owner-mintable combos from checks 4+6 | warn (no extra score; already counted) |
+| 9 | ERC-20 info | `eth_call` `name`/`symbol`/`decimals`/`totalSupply` | info only |
 
 **Scoring:** `DANGER` if score ≥ 70 or any critical fail; `CAUTION` if
 30–69 (or unverified source with score < 30); `SAFE` if < 30 and source
@@ -40,7 +41,16 @@ verified. Admin-gated functions (`mint`/`withdraw`/fee/`pause`) are
 discounted to one third when there is **no live owner** who could call
 them — WBNB's standard `withdraw(uint256)` (unwrap) must not turn a safe
 token dangerous. Critical findings (`SELFDESTRUCT`/`DELEGATECALL` opcodes,
-unlimited approval to an unknown spender) are never discounted.
+unlimited approval to an unknown spender, **confirmed-scam registry hit**)
+are never discounted.
+
+**Registry rule:** an entry is added only with public, verifiable
+evidence of a confirmed incident (incident reports, victim counts,
+on-chain traces) — never on suspicion. The registry is how Sentinel
+catches what bytecode cannot: a drain that ran through a project's
+website/connect flow leaves no malicious function in the contract, so no
+on-chain signal alone justifies DANGER — but a confirmed incident does.
+Absence from the registry is not proof of safety.
 
 ## Endpoints
 
@@ -49,7 +59,7 @@ Base URL after deploy: `https://sentinel.<account>.workers.dev`
 | Endpoint | Description |
 |----------|-------------|
 | `GET /` | Demo page: paste an address, see the verdict — no curl needed. Includes preset buttons (WBNB, Mars Nexus, unlimited-approve calldata). |
-| `GET /health` | `{"ok":true,"agent":"sentinel","version":"1.0.0","chains":["bsc","eth"]}` — for preflight + monitoring |
+| `GET /health` | `{"ok":true,"agent":"sentinel","version":"1.1.0","chains":["bsc","eth"]}` — for preflight + monitoring |
 | `GET /check?chain=bsc&address=0x…` | Same as POST /check, try it from the browser address bar |
 | `POST /check` | Main API. Body: `{"chain":"bsc","address":"0x…","calldata":"0x…","from":"0x…"}` (`calldata`/`from` optional) |
 | `POST /agent` | Agent Games platform envelope: `{"type":"…","task_id":"…","mode":"…","input":{…}}` (+ optional `x-agent-games-signature` header). Accepts **any** envelope shape — never 404s or crashes. If the input contains a contract address it runs the same check and returns the verdict as `decision`; otherwise it returns an agent identity response. `GET /agent` also answers with the identity (some preflight probes use GET). |
@@ -102,31 +112,37 @@ discounted because there is no live owner. `uWjK9` is a junk candidate
 name returned by 4byte.directory for one selector — it affects nothing;
 only names matching risk patterns affect the score.)
 
-### Mars Nexus `0xC4059D2F9F6F86695896e68F3E73E1e6cC3791c8` on BSC — CAUTION, score 40
+### Mars Nexus `0xC4059D2F9F6F86695896e68F3E73E1e6cC3791c8` on BSC — DANGER, score 100
 
 ```json
 {
-  "verdict": "CAUTION", "risk_score": 40,
-  "summary": "CAUTION: this contract has risk signals (unverified source; active owner 0xbde9…9bc7). Do not approve unlimited spending; verify before signing.",
+  "verdict": "DANGER", "risk_score": 100,
+  "summary": "DANGER: this contract shows critical risk signals (confirmed scam: Mars Nexus; unverified source; active owner 0xbde9…9bc7). Do not sign approvals or send funds to it.",
   "checks": [
+    {"name": "reputation", "status": "fail", "detail": "LISTED in Sentinel's confirmed-scam registry: Mars Nexus (incident 2026-11-04). Confirmed drain: 33 agent wallets drained after connecting to the Mars Nexus site (QR connect flow)."},
     {"name": "source-verified", "status": "warn", "detail": "Source code NOT verified on Sourcify …"},
     {"name": "owner", "status": "warn", "detail": "Active owner: 0xbde905a3424f41d3a400a84e10a118e7df0f9bc7. Owner-only functions (if any) can still be called by this address."},
     {"name": "proxy", "status": "pass", "detail": "EIP-1967 implementation slot is empty …"},
     {"name": "selectors", "status": "pass", "detail": "Non-standard functions found (128 selectors total): gameController()."},
     {"name": "drainer-patterns", "status": "pass", "detail": "No blacklist / hidden-fee / unlimited-mint drainer pattern found …"},
     {"name": "token-info", "status": "pass", "detail": "Not an ERC-20 token …"}
-  ]
+  ],
+  "recommendation": "Do NOT interact: do not approve, do not send funds, revoke any existing approval to this contract immediately."
 }
 ```
 
-**Honest note on this case:** the contract itself shows no critical
-on-chain function (no `mint`/`withdraw`/blacklist resolved, not a proxy).
-The November 2026 drain happened through the **website/connect flow**
-(users signing purchases after connecting), which no bytecode check can
-see. Sentinel flags what the contract *does* show — unverified source
-plus a live owner who can still call owner-only functions — and says
-CAUTION, not DANGER, because the evidence does not support more. A tool
-that cried DANGER here would be guessing. See *Limitations*.
+**How this case works:** the contract itself shows no critical on-chain
+function (no `mint`/`withdraw`/blacklist resolved, not a proxy) — the
+November 2026 drain ran through the **website/connect flow**, which no
+bytecode check can see. On on-chain evidence alone the contract scores
+40 (unverified source +25, active owner +15), which was the v1.0.0
+verdict: CAUTION. v1.1.0 adds the confirmed-scam registry: Mars Nexus
+is a confirmed incident (33 wallets drained, 2026-11-04), so the
+registry hit is a critical failure and the verdict is DANGER at the
+capped score of 100. The on-chain checks still run, so the verdict
+carries both the incident evidence and the contract's own signals. A
+registry entry is never added on suspicion alone — see *Registry rule*
+above. See *Limitations* for what this still cannot catch.
 
 ### Unlimited `approve` calldata (WBNB + spender `0xdead…0000`, amount 2²⁵⁶−1) — DANGER, score 55
 
@@ -182,10 +198,15 @@ build VM — see TESTS.md — but the check completed: block 26417252.)
 
 ## Limitations — what Sentinel can NOT detect
 
-- **Off-chain / website-side attacks.** The Mars Nexus case is the
-  proof: the drain ran through the site users connected to, not through
-  a visibly malicious contract function. Sentinel checks the contract,
-  not the dApp front-end, the URL you clicked, or the wallet prompt.
+- **Off-chain / website-side attacks — unless already confirmed.** The
+  Mars Nexus case is the proof: the drain ran through the site users
+  connected to, not through a visibly malicious contract function.
+  Sentinel checks the contract, not the dApp front-end, the URL you
+  clicked, or the wallet prompt. The confirmed-scam registry covers
+  incidents that are already known and evidenced — a *new* website-side
+  attack with no confirmed incident yet will not be flagged as DANGER
+  by the registry, only by whatever on-chain signals the contract
+  itself shows.
 - **Verified-but-malicious code.** A verified contract can still contain
   a backdoor written in plain sight; Sentinel flags risky *function
   names*, it does not audit logic. A `mint` that only the owner can call

@@ -61,7 +61,7 @@ await test("POST /check WBNB (expected SAFE)", async () => {
   return { ...r, note: verdictLine(r.data) };
 });
 
-await test("POST /check Mars Nexus (real drain case)", async () => {
+await test("POST /check Mars Nexus (real drain case — expected DANGER via registry)", async () => {
   const r = await call("POST", "/check", { chain: "bsc", address: MARS });
   return { ...r, note: verdictLine(r.data) };
 });

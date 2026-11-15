@@ -22,6 +22,9 @@
  *     parallel, each with its own short timeout.
  *   - Every external call has a timeout and a fallback; a failed
  *     dependency degrades one check to "unknown", never the whole request.
+ *   - A curated confirmed-scam registry (KNOWN_SCAMS) covers what
+ *     bytecode cannot: drains that ran through a project's website or
+ *     connect flow. A registry hit is a critical failure.
  *
  * Sources (verified 2026-11-15 from this VM):
  *   - Sourcify API v1 is REMOVED. v2 endpoint used here:
@@ -34,7 +37,7 @@
  *     from some networks; fallback order below handles that.
  */
 
-const VERSION = "1.0.0"; // plain const, NOT exported: Workers treats any
+const VERSION = "1.1.0"; // plain const, NOT exported: Workers treats any
 // top-level export as a named binding and rejects non-handler exports.
 
 const CHAINS = {
@@ -99,6 +102,23 @@ const NAME_RISK = [
   { re: /^mint/, weight: 10, level: "high", label: "mint" },
   { re: /^pause/, weight: 5, level: "low", label: "pause" },
 ];
+// Curated registry of contracts tied to CONFIRMED drain/scam incidents.
+// Entries are added only with public, verifiable evidence (incident
+// reports, victim counts, on-chain traces) — never on suspicion alone.
+// This is how a guard catches what bytecode cannot: the Mars Nexus drain
+// ran through the project's website/connect flow, not through a visibly
+// malicious contract function, so no on-chain signal justifies DANGER on
+// its own. A registry hit is a critical failure by design.
+// Keys are lowercase addresses; `chain` scopes the entry to one chain.
+const KNOWN_SCAMS = {
+  "0xc4059d2f9f6f86695896e68f3e73e1e6cc3791c8": {
+    chain: "bsc",
+    name: "Mars Nexus",
+    incident: "2026-11-04",
+    evidence: "Confirmed drain: 33 agent wallets drained after connecting to the Mars Nexus site (QR connect flow). The contract is kept as the registry anchor for the project.",
+  },
+};
+
 // Standard token functions: expected, not suspicious on their own.
 const STANDARD_NAMES = new Set([
   "approve", "transfer", "transferfrom", "balanceof", "totalsupply",
@@ -376,6 +396,24 @@ export async function checkContract({ chain = "bsc", address, calldata = null, f
   push("contract-exists", "pass",
     `Contract bytecode present (${Math.floor((code.length - 2) / 2)} bytes).`,
     ev("eth_getCode", codeRpc));
+
+  // 1b. Reputation: curated confirmed-scam registry. A hit is a critical
+  // failure — a confirmed drain outweighs any on-chain reading. The
+  // on-chain checks below still run, so the verdict also carries the
+  // contract's own evidence.
+  const scam = KNOWN_SCAMS[address.toLowerCase()];
+  if (scam && scam.chain === chain) {
+    score += 70;
+    criticalFail = true;
+    push("reputation", "fail",
+      `LISTED in Sentinel's confirmed-scam registry: ${scam.name} (incident ${scam.incident}). ${scam.evidence}`,
+      `curated registry (entry dated ${scam.incident}); on-chain checks below still run @ ${blockTag}`);
+    notes.push(`confirmed scam: ${scam.name}`);
+  } else {
+    push("reputation", "pass",
+      "Not listed in Sentinel's curated confirmed-scam registry — absence from the registry is not proof of safety; it only means no confirmed incident is tied to this address.",
+      "curated registry lookup, local only");
+  }
 
   // 2. Source verification (Sourcify v2 — v1 was removed).
   try {
