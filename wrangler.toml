@@ -1,0 +1,6 @@
+name = "sentinel"
+main = "src/index.js"
+compatibility_date = "2026-11-15"
+
+# No secrets, no bindings, no KV/R2 needed. All data comes from public
+# RPC endpoints and public APIs (Sourcify v2, 4byte.directory) at request time.
